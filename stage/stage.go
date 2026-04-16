@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
 	"net/http"
 	"os"
@@ -21,7 +20,6 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -430,23 +428,9 @@ func (s *Stage) runQueryFile(ctx context.Context, queryFile string, expectedRowC
 	file, err := os.Open(queryFile)
 	var queries []string
 	if err == nil {
-		if s.States.SingleFileMode {
-			// Single-file mode: treat entire file as one query (matches presto-cli --file behavior)
-			content, readErr := io.ReadAll(file)
-			file.Close()
-			if readErr != nil {
-				err = readErr
-			} else {
-				trimmed := strings.TrimSpace(string(content))
-				if len(trimmed) > 0 {
-					queries = []string{trimmed}
-				}
-			}
-		} else {
-			// Default mode: split by semicolons (backward compatible)
-			queries, err = prestoapi.SplitQueries(file)
-			file.Close()
-		}
+		// Always split by semicolons to avoid Presto API syntax errors
+		queries, err = prestoapi.SplitQueries(file)
+		file.Close()
 	}
 	if err != nil {
 		if !*s.AbortOnError {
@@ -462,10 +446,21 @@ func (s *Stage) runQueryFile(ctx context.Context, queryFile string, expectedRowC
 	}
 
 	if expectedRowCountStartIndex != nil {
-		err = s.runQueries(ctx, queries, fileAlias, *expectedRowCountStartIndex)
-		*expectedRowCountStartIndex += len(queries)
+		if s.States.SingleFileMode {
+			// Single-file mode: execute all queries but track as single file
+			err = s.runQueriesAsFile(ctx, queries, fileAlias, *expectedRowCountStartIndex)
+			*expectedRowCountStartIndex += 1 // Count as 1 file, not N queries
+		} else {
+			// Default mode: execute and track each query separately
+			err = s.runQueries(ctx, queries, fileAlias, *expectedRowCountStartIndex)
+			*expectedRowCountStartIndex += len(queries)
+		}
 	} else {
-		err = s.runQueries(ctx, queries, fileAlias, 0)
+		if s.States.SingleFileMode {
+			err = s.runQueriesAsFile(ctx, queries, fileAlias, 0)
+		} else {
+			err = s.runQueries(ctx, queries, fileAlias, 0)
+		}
 	}
 	return err
 }
@@ -581,6 +576,123 @@ func (s *Stage) runShellScripts(ctx context.Context, shellScripts []string, extr
 	}
 	return nil
 }
+// runQueriesAsFile executes all queries in a file sequentially but tracks them as a single file execution.
+// This matches presto-cli --file behavior where the entire file is treated as one unit.
+func (s *Stage) runQueriesAsFile(ctx context.Context, queries []string, queryFile *string, expectedRowCountStartIndex int) (retErr error) {
+	if len(queries) == 0 {
+		return nil
+	}
+
+	// Pre-query cycle scripts run once for the entire file
+	queryCycleEnv := s.queryCycleEnv(queryFile, 0)
+	preQueryCycleErr := s.runShellScripts(ctx, s.PreQueryCycleShellScripts, queryCycleEnv...)
+	if preQueryCycleErr != nil {
+		return fmt.Errorf("pre-query script execution failed: %w", preQueryCycleErr)
+	}
+
+	var abortErr error
+	// Execute cold and warm runs for the entire file
+	for j := 0; j < *s.ColdRuns+*s.WarmRuns; j++ {
+		isColdRun := j < *s.ColdRuns
+		
+		// Start timing for entire file execution
+		fileStartTime := time.Now()
+		var totalRowCount int64
+		var fileError error
+		var lastQueryID string
+		var lastInfoURL string
+
+		// Execute all queries in the file sequentially
+		for _, queryText := range queries {
+			query := &Query{
+				Text:             queryText,
+				File:             queryFile,
+				Index:            0, // Always 0 for file-level tracking
+				BatchSize:        1, // File is treated as single unit
+				ColdRun:          isColdRun,
+				SequenceNo:       j,
+				ExpectedRowCount: -1,
+			}
+			if len(s.expectedRowCountInCurrentSchema) > expectedRowCountStartIndex {
+				query.ExpectedRowCount = s.expectedRowCountInCurrentSchema[expectedRowCountStartIndex]
+			}
+
+			result, err := s.runQuery(ctx, query)
+			if err != nil {
+				fileError = err
+				lastQueryID = result.QueryId
+				lastInfoURL = result.InfoUrl
+				// On error, abort entire file execution
+				if *s.AbortOnError || ctx.Err() != nil {
+					s.States.exitCode.CompareAndSwap(0, 1)
+					abortErr = result
+					break
+				}
+				// Log error but continue with next statement in file
+				s.logErr(ctx, result)
+			} else {
+				totalRowCount += int64(result.RowCount)
+				lastQueryID = result.QueryId
+				lastInfoURL = result.InfoUrl
+			}
+		}
+
+		fileEndTime := time.Now()
+		fileDuration := fileEndTime.Sub(fileStartTime)
+
+		// Create a single result for the entire file
+		fileResult := &QueryResult{
+			Query: &Query{
+				Text:             fmt.Sprintf("-- File with %d statements", len(queries)),
+				File:             queryFile,
+				Index:            0,
+				BatchSize:        1,
+				ColdRun:          isColdRun,
+				SequenceNo:       j,
+				ExpectedRowCount: -1,
+			},
+			QueryId:   lastQueryID,
+			InfoUrl:   lastInfoURL,
+			RowCount:  int(totalRowCount),
+			StartTime: fileStartTime,
+			EndTime:   &fileEndTime,
+		}
+
+		if fileError != nil {
+			fileResult.QueryError = fileError
+		}
+
+		// Report file-level result
+		if s.States.OnQueryCompletion != nil {
+			s.States.OnQueryCompletion(fileResult)
+		}
+		s.saveQueryJsonFile(fileResult)
+		s.States.resultChan <- fileResult
+
+		if fileError != nil {
+			log.Error().EmbedObject(fileResult).Msgf("file execution failed")
+		} else {
+			log.Info().EmbedObject(fileResult).Msgf("file execution finished (duration: %v, statements: %d, total rows: %d)", 
+				fileDuration, len(queries), totalRowCount)
+		}
+
+		if abortErr != nil {
+			break
+		}
+	}
+
+	// Post-query cycle scripts run once for the entire file
+	postQueryCycleErr := s.runShellScripts(ctx, s.PostQueryCycleShellScripts, queryCycleEnv...)
+	if abortErr != nil {
+		return abortErr
+	}
+	if postQueryCycleErr != nil {
+		return fmt.Errorf("post-query script execution failed: %w", postQueryCycleErr)
+	}
+
+	return nil
+}
+
 
 func (s *Stage) runQueries(ctx context.Context, queries []string, queryFile *string, expectedRowCountStartIndex int) (retErr error) {
 	batchSize := len(queries)
