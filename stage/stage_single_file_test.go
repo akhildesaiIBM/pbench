@@ -144,5 +144,3 @@ func SplitQueriesForTest(file *os.File, singleFileMode bool) ([]string, error) {
 	// Default mode: use existing split logic
 	return prestoapi.SplitQueries(file)
 }
-
-// Made with Bob
