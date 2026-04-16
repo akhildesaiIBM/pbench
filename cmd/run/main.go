@@ -15,15 +15,16 @@ import (
 )
 
 var (
-	Name          string
-	Comment       string
-	PrestoFlags   utils.PrestoFlags
-	OutputPath    string
-	RandSeed      int64
-	RandSkip      int
-	InfluxCfgPath string
-	MySQLCfgPath  string
-	PulumiCfgPath string
+	Name             string
+	Comment          string
+	PrestoFlags      utils.PrestoFlags
+	OutputPath       string
+	RandSeed         int64
+	RandSkip         int
+	InfluxCfgPath    string
+	MySQLCfgPath     string
+	PulumiCfgPath    string
+	SingleFileMode   bool
 )
 
 func Run(_ *cobra.Command, args []string) {
@@ -37,13 +38,14 @@ func Run(_ *cobra.Command, args []string) {
 	utils.ExpandHomeDirectory(&PulumiCfgPath)
 	mainStage := &stage.Stage{
 		States: &stage.SharedStageStates{
-			RunName:      Name,
-			Comment:      Comment,
-			RandSeed:     RandSeed,
-			RandSkip:     RandSkip,
-			ServerFQDN:   parsedServerUrl.Host,
-			RunStartTime: time.Now(),
-			OutputPath:   OutputPath,
+			RunName:        Name,
+			Comment:        Comment,
+			RandSeed:       RandSeed,
+			RandSkip:       RandSkip,
+			ServerFQDN:     parsedServerUrl.Host,
+			RunStartTime:   time.Now(),
+			OutputPath:     OutputPath,
+			SingleFileMode: SingleFileMode,
 		},
 	}
 

@@ -30,4 +30,5 @@ func init() {
 	runCmd.Flags().StringVar(&run.InfluxCfgPath, "influx", "", "InfluxDB connection config for run recorder (optional)")
 	runCmd.Flags().StringVar(&run.MySQLCfgPath, "mysql", "", "MySQL connection config for run recorder (optional)")
 	runCmd.Flags().StringVar(&run.PulumiCfgPath, "pulumi", "", "(only works when a MySQL run recorder is specified) Pulumi API config for storing deployment details with MySQL (optional)")
+	runCmd.Flags().BoolVar(&run.SingleFileMode, "single-file-mode", false, "Execute entire query file as single unit (do not split by semicolons)")
 }

@@ -21,6 +21,9 @@ type SharedStageStates struct {
 	// OutputPath is where we store the logs, query results, query json files, query column metadata files, etc.
 	// It should be set by the --output/-o command-line argument. Once set there, its value gets propagated to all the stages.
 	OutputPath string
+	// SingleFileMode controls whether query files are executed as a single unit (true) or split by semicolons (false, default).
+	// When true, matches presto-cli --file behavior where entire file is executed together.
+	SingleFileMode bool
 	// NewClient is called when the stage needs to create a new Presto client. This function is passed down to descendant stages by default.
 	NewClient utils.NewPrestoClientFn
 	// AbortAll is passed down to descendant stages by default and will be used to cancel the current context.

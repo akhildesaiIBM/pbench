@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -428,8 +430,23 @@ func (s *Stage) runQueryFile(ctx context.Context, queryFile string, expectedRowC
 	file, err := os.Open(queryFile)
 	var queries []string
 	if err == nil {
-		queries, err = prestoapi.SplitQueries(file)
-		file.Close()
+		if s.States.SingleFileMode {
+			// Single-file mode: treat entire file as one query (matches presto-cli --file behavior)
+			content, readErr := io.ReadAll(file)
+			file.Close()
+			if readErr != nil {
+				err = readErr
+			} else {
+				trimmed := strings.TrimSpace(string(content))
+				if len(trimmed) > 0 {
+					queries = []string{trimmed}
+				}
+			}
+		} else {
+			// Default mode: split by semicolons (backward compatible)
+			queries, err = prestoapi.SplitQueries(file)
+			file.Close()
+		}
 	}
 	if err != nil {
 		if !*s.AbortOnError {
