@@ -641,6 +641,7 @@ func (s *Stage) runQueriesAsFile(ctx context.Context, queries []string, queryFil
 
 		// Create a single result for the entire file
 		fileResult := &QueryResult{
+			StageId: s.Id,
 			Query: &Query{
 				Text:             fmt.Sprintf("-- File with %d statements", len(queries)),
 				File:             queryFile,
