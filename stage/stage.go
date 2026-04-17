@@ -622,13 +622,13 @@ func (s *Stage) runQueriesAsFile(ctx context.Context, queries []string, queryFil
 				fileError = result.QueryError  // Use result.QueryError to preserve error structure
 				lastQueryID = result.QueryId
 				lastInfoURL = result.InfoUrl
-				// On error, abort entire file execution
+				// On error, stop executing remaining statements in file (matches presto-cli --file behavior)
 				if *s.AbortOnError || ctx.Err() != nil {
 					s.States.exitCode.CompareAndSwap(0, 1)
 					abortErr = result
-					break
 				}
-				// Don't log individual statement errors - will log at file level
+				// Break out of statement loop - file execution failed
+				break
 			} else {
 				totalRowCount += int64(result.RowCount)
 				lastQueryID = result.QueryId
