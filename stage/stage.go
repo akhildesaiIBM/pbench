@@ -619,7 +619,7 @@ func (s *Stage) runQueriesAsFile(ctx context.Context, queries []string, queryFil
 
 			result, err := s.runQuery(ctx, query)
 			if err != nil {
-				fileError = err
+				fileError = result.QueryError  // Use result.QueryError to preserve error structure
 				lastQueryID = result.QueryId
 				lastInfoURL = result.InfoUrl
 				// On error, abort entire file execution
