@@ -407,9 +407,18 @@ func (s *Stage) runSequentially(ctx context.Context) (returnErr error) {
 	expectedRowCountStartIndex := len(s.Queries)
 	// Using range loop variable may cause some problems here because the file names can be propagated to some other
 	// goroutines that may use this query file path string.
-	for i := 0; i < len(s.QueryFiles); i++ {
+	totalFiles := len(s.QueryFiles)
+	for i := 0; i < totalFiles; i++ {
 		if err := s.runQueryFile(ctx, s.QueryFiles[i], &expectedRowCountStartIndex, nil); err != nil {
 			return err
+		}
+		
+		// Progress logging for single-file mode when running many files
+		if s.States.SingleFileMode && totalFiles >= 10 && (i+1)%10 == 0 {
+			log.Info().
+				Int("completed", i+1).
+				Int("total", totalFiles).
+				Msg("file execution progress")
 		}
 	}
 	return nil
