@@ -628,8 +628,7 @@ func (s *Stage) runQueriesAsFile(ctx context.Context, queries []string, queryFil
 					abortErr = result
 					break
 				}
-				// Log error but continue with next statement in file
-				s.logErr(ctx, result)
+				// Don't log individual statement errors - will log at file level
 			} else {
 				totalRowCount += int64(result.RowCount)
 				lastQueryID = result.QueryId
